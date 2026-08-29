@@ -88,6 +88,10 @@ static THD_FUNCTION(GameThread, arg) {
   while (true) {
     /* Wait for the game to be started via shell command. */
     if (!game_active) {
+      palDisableLineEvent(LINE_BTN_P1);
+      palDisableLineEvent(LINE_BTN_P2);
+      game_hw_leds_off();
+      game_state = GAME_IDLE;
       chThdSleepMilliseconds(100);
       continue;
     }
@@ -129,7 +133,7 @@ static THD_FUNCTION(GameThread, arg) {
     palSetLine(LINE_LED_RED);
     start_time = chVTGetSystemTimeX();
 
-    /* Ensure semaphore is not signaled from any stray interrupts */
+    /* Drain any stale semaphore signal before enabling buttons. */
     chBSemWaitTimeout(&sem_game_event, TIME_IMMEDIATE);
 
     palSetLineCallback(LINE_BTN_P1, btn_p1_cb, NULL);
@@ -138,6 +142,19 @@ static THD_FUNCTION(GameThread, arg) {
     palEnableLineEvent(LINE_BTN_P2, PAL_EVENT_MODE_FALLING_EDGE);
 
     chBSemWait(&sem_game_event);
+
+    /* Always disable button events immediately after waking up.
+     * In the normal case the ISR already did this, but after an
+     * abort-via-stop the events are still live and could cause
+     * stray signals on the next round. */
+    palDisableLineEvent(LINE_BTN_P1);
+    palDisableLineEvent(LINE_BTN_P2);
+
+    /* If we were woken by a stop command, discard this round. */
+    if (!game_active) {
+      palClearLine(LINE_LED_RED);
+      continue;
+    }
 
     palClearLine(LINE_LED_RED);
     uint32_t rt_ms = (uint32_t)chTimeI2MS(reaction_time);
@@ -154,7 +171,7 @@ static THD_FUNCTION(GameThread, arg) {
       chprintf((BaseSequentialStream *)&SD2, "Winner: Player 2 | Reaction time: %u ms\r\n", rt_ms);
     }
 
-    if (rt_ms < best_time_ms) {
+    if (rt_ms < best_time_ms && winner != WINNER_NONE) {
       best_time_ms = rt_ms;
       best_player = winner;
       chprintf((BaseSequentialStream *)&SD2, "*** NEW BEST TIME! ***\r\n");
@@ -175,8 +192,26 @@ void game_logic_init(void) {
   chThdCreateStatic(waGameThread, sizeof(waGameThread), NORMALPRIO, GameThread, NULL);
 }
 
-void game_logic_start(void) { game_active = true; }
-void game_logic_stop(void) { game_active = false; }
+void game_logic_start(void) {
+  /* Re-initialize semaphore to taken state — this guarantees
+   * no stale signal can survive from a previous stop cycle.
+   * Safe to call here because the game thread is in the idle
+   * polling loop (sleeping 100ms), not blocked on the semaphore. */
+  chBSemObjectInit(&sem_game_event, true);
+  game_active = true;
+}
+
+void game_logic_stop(void) {
+  /* Everything inside a single critical section to prevent any
+   * button ISR from firing between these operations. */
+  chSysLock();
+  game_active = false;
+  game_state = GAME_IDLE;
+  palDisableLineEventI(LINE_BTN_P1);
+  palDisableLineEventI(LINE_BTN_P2);
+  chBSemSignalI(&sem_game_event);
+  chSysUnlock();
+}
 
 void game_logic_get_stats(uint32_t *w1, uint32_t *w2) {
   chMtxLock(&stats_mtx);
