@@ -1,6 +1,6 @@
 # ReflexDuel - IoT Full Stack Reaction Game
 
-ReflexDuel is a complete IoT (Internet of Things) Full Stack project built around a two-player reaction time game. The system combines bare-metal embedded programming, a Python-based serial-to-cloud bridge, and a modern React web dashboard for remote control and real-time statistics monitoring.
+ReflexDuel is a full-stack IoT project designed as a competitive two-player reaction game, developed at the Neapolis Innovation Summer Camp by STMicroelectronics. The system combines bare-metal embedded programming, a Python-based serial-to-cloud bridge, and a modern React web dashboard for remote control and real-time statistics monitoring.
 
 ## 🏗️ Architecture
 
